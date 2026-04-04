@@ -25,22 +25,26 @@ import justificacionesRoutes from './routes/justificaciones.routes.js';
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ─── Seguridad: Helmet headers (MODIFICADO PARA PDF) ───
+// ─── Seguridad: Helmet headers mejorado para PDF ───
 app.use(helmet({
-  // Permite cargar recursos desde otros orígenes
   crossOriginResourcePolicy: { policy: 'cross-origin' },
-  // Desactivado para evitar que el visor de PDF del navegador se bloquee
   contentSecurityPolicy: false,
-  // ESTO CORRIGE EL ERROR 'SAMEORIGIN': permite que el navegador muestre PDFs en iframes/marcos
   frameguard: false 
 }));
+
+// 🛡️ PARCHE DEFINITIVO: Forzar eliminación de bloqueo de marcos (iframes)
+app.use((req, res, next) => {
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Content-Security-Policy', "frame-ancestors *");
+  next();
+});
 
 // ─── CORS ───
 app.use(cors());
 
 // ─── Rate Limiting global ───
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
+  windowMs: 15 * 60 * 1000, 
   max: 500,
   message: { msg: 'Demasiadas solicitudes. Intenta de nuevo más tarde.' },
   standardHeaders: true,
@@ -48,7 +52,7 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// ─── Rate Limiting para login (más estricto) ───
+// ─── Rate Limiting para login ───
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,

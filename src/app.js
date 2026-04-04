@@ -25,10 +25,14 @@ import justificacionesRoutes from './routes/justificaciones.routes.js';
 const app = express();
 const port = process.env.PORT || 3000;
 
-// ─── Seguridad: Helmet headers ───
+// ─── Seguridad: Helmet headers (MODIFICADO PARA PDF) ───
 app.use(helmet({
+  // Permite cargar recursos desde otros orígenes
   crossOriginResourcePolicy: { policy: 'cross-origin' },
-  contentSecurityPolicy: false
+  // Desactivado para evitar que el visor de PDF del navegador se bloquee
+  contentSecurityPolicy: false,
+  // ESTO CORRIGE EL ERROR 'SAMEORIGIN': permite que el navegador muestre PDFs en iframes/marcos
+  frameguard: false 
 }));
 
 // ─── CORS ───

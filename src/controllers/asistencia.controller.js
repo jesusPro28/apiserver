@@ -81,7 +81,7 @@ export const registrarAsistencia = async (req, res) => {
     let horaEntradaProgramada = '08:00:00';
     if (horario.length > 0) {
       const dia = new Date(fecha + 'T12:00:00').getDay();
-      // CORRECCIÓN: Nombres de columnas según tu base de datos real (sin acentos, con guión bajo)
+      // CORRECCIÓN 1: Nombres de columnas según tu base de datos (u941347256_Equipo1)
       const mapaDias = {
         1: 'LUNES_am', 
         2: 'MARTES_am', 
@@ -99,9 +99,10 @@ export const registrarAsistencia = async (req, res) => {
     const esTardanza  = entradaMin > programaMin;
     let estatus       = esTardanza ? 'RETARDO' : 'PUNTUAL';
 
+    // CORRECCIÓN 2: Se agrega ID-INCIDENCIA como NULL para evitar el error de "no default value"
     const [resultAsis] = await db.query(
-      'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA) VALUES (?, ?, ?, ?)',
-      [numTrabajador, fecha, entrada, salida]
+      'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA, `ID-INCIDENCIA`) VALUES (?, ?, ?, ?, ?)',
+      [numTrabajador, fecha, entrada, salida, null]
     );
 
     await db.query(
@@ -177,7 +178,6 @@ export const registrarAsistencia = async (req, res) => {
 
   } catch (error) {
     logger.error('Error en registrarAsistencia', { error: error.message });
-    // Enviamos el mensaje de error técnico para que lo veas en el Debug de C#
     res.status(500).json({ 
       msg: 'Error al registrar asistencia.',
       error_tecnico: error.message 

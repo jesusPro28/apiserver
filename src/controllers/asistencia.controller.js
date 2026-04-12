@@ -46,7 +46,6 @@ export const getAllAsistencias = async (req, res) => {
   }
 };
 
-// ✅ Registrar asistencia con detección de tardanza
 export const registrarAsistencia = async (req, res) => {
   try {
     const numTrabajador = sanitizar(req.body.numTrabajador || '');
@@ -58,7 +57,14 @@ export const registrarAsistencia = async (req, res) => {
       return res.status(400).json({ msg: 'Número de trabajador y hora de entrada son obligatorios.' });
     }
 
-    // Verificar si ya existe asistencia para ese día
+    const [empExiste] = await db.query(
+      'SELECT COUNT(*) as c FROM empleado WHERE `NUM-TRABAJADOR` = ?',
+      [numTrabajador]
+    );
+    if (empExiste[0].c === 0) {
+      return res.status(404).json({ msg: 'Número de trabajador no encontrado.' });
+    }
+
     const [existe] = await db.query(
       'SELECT COUNT(*) as c FROM asistencia WHERE `NUM-TRABAJADOR` = ? AND FECHA = ?',
       [numTrabajador, fecha]
@@ -67,7 +73,6 @@ export const registrarAsistencia = async (req, res) => {
       return res.status(400).json({ msg: 'Ya existe un registro de asistencia para este empleado en esta fecha.' });
     }
 
-    // Obtener horario del empleado para determinar si es tardanza
     const [horario] = await db.query(
       'SELECT * FROM horario WHERE `NUM-TRABAJADOR` = ?',
       [numTrabajador]
@@ -75,7 +80,7 @@ export const registrarAsistencia = async (req, res) => {
 
     let horaEntradaProgramada = '08:00:00';
     if (horario.length > 0) {
-      const dia = new Date(fecha + 'T12:00:00').getDay(); // 0=dom, 1=lun...
+      const dia = new Date(fecha + 'T12:00:00').getDay();
       const mapaDias = {
         1: 'LUNES-am', 2: 'MARTES-am', 3: 'MIÉRCOLES-am',
         4: 'JUEVES-am', 5: 'VIERNES-am'
@@ -85,37 +90,77 @@ export const registrarAsistencia = async (req, res) => {
       }
     }
 
-    // Comparar horas
-    const entradaMin = timeToMinutes(entrada);
-    const programadaMin = timeToMinutes(horaEntradaProgramada);
-    const esTardanza = entradaMin > programadaMin;
-    const estatus = esTardanza ? 'RETARDO' : 'PUNTUAL';
+    const entradaMin  = timeToMinutes(entrada);
+    const programaMin = timeToMinutes(horaEntradaProgramada);
+    const esTardanza  = entradaMin > programaMin;
+    let estatus       = esTardanza ? 'RETARDO' : 'PUNTUAL';
 
-    // Insertar asistencia
     const [resultAsis] = await db.query(
       'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA) VALUES (?, ?, ?, ?)',
       [numTrabajador, fecha, entrada, salida]
     );
 
-    // Insertar o actualizar estado
     await db.query(
       `INSERT INTO estado (\`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE ESTATUS = ?`,
       [numTrabajador, fecha, estatus, estatus]
     );
 
-    // Si es tardanza, crear notificación
     if (esTardanza) {
       const fechaFormateada = new Date(fecha + 'T12:00:00').toLocaleDateString('es-MX');
-      await db.query(
-        `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
-         VALUES (?, 'TARDANZA', ?, ?)`,
-        [
-          numTrabajador,
-          `Se registró un retardo el día ${fechaFormateada}. Hora de entrada: ${entrada}. Hora programada: ${horaEntradaProgramada}. Puedes subir una justificación desde tu perfil.`,
-          resultAsis.insertId
-        ]
-      ).catch(e => logger.error('Error creando notificación de tardanza', { error: e.message }));
+      const inicioMes = fecha.substring(0, 7) + '-01';
+
+      const [conteoRetardos] = await db.query(
+        `SELECT COUNT(*) as total FROM estado
+         WHERE \`NUM-TRABAJADOR\` = ?
+           AND ESTATUS = 'RETARDO'
+           AND FECHA >= ?
+           AND FECHA <= ?`,
+        [numTrabajador, inicioMes, fecha]
+      );
+
+      const totalRetardosMes = conteoRetardos[0].total;
+
+      if (totalRetardosMes >= 3) {
+        estatus = 'FALTA';
+        await db.query(
+          `UPDATE estado SET ESTATUS = 'FALTA'
+           WHERE \`NUM-TRABAJADOR\` = ? AND FECHA = ?`,
+          [numTrabajador, fecha]
+        );
+
+        await db.query(
+          `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+           VALUES (?, 'INFO', ?, ?)`,
+          [
+            numTrabajador,
+            `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. ` +
+            `Acumulaste ${totalRetardosMes} retardos este mes. ` +
+            `Puedes subir una justificación desde tu perfil.`,
+            resultAsis.insertId
+          ]
+        ).catch(e => logger.error('Error creando notificación de FALTA', { error: e.message }));
+
+        logger.info('3er retardo convertido a FALTA', { numTrabajador, fecha, totalRetardosMes });
+
+      } else {
+        const retardosRestantes = 3 - totalRetardosMes;
+        await db.query(
+          `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+           VALUES (?, 'TARDANZA', ?, ?)`,
+          [
+            numTrabajador,
+            `Se registró un retardo el día ${fechaFormateada}. ` +
+            `Hora de entrada: ${entrada}. Hora programada: ${horaEntradaProgramada}. ` +
+            `Llevas ${totalRetardosMes} retardo(s) este mes. ` +
+            (retardosRestantes === 1
+              ? `⚠ ¡El siguiente retardo contará como FALTA!`
+              : `Te quedan ${retardosRestantes} retardos antes de que cuente como FALTA.`) +
+            ` Puedes subir una justificación desde tu perfil.`,
+            resultAsis.insertId
+          ]
+        ).catch(e => logger.error('Error creando notificación de tardanza', { error: e.message }));
+      }
     }
 
     logger.info('Asistencia registrada', { numTrabajador, fecha, estatus });
@@ -125,6 +170,7 @@ export const registrarAsistencia = async (req, res) => {
       estatus,
       esTardanza
     });
+
   } catch (error) {
     logger.error('Error en registrarAsistencia', { error: error.message });
     res.status(500).json({ msg: 'Error al registrar asistencia.' });

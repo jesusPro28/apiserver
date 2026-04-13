@@ -95,13 +95,13 @@ export const registrarAsistencia = async (req, res) => {
     const esTardanza  = entradaMin > programaMin;
     let estatus       = esTardanza ? 'RETARDO' : 'PUNTUAL';
 
-    // FIX 1: ID-INCIDENCIA como NULL
+    // FIX 1: ASISTENCIA
     const [resultAsis] = await db.query(
       'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA, `ID-INCIDENCIA`) VALUES (?, ?, ?, ?, ?)',
       [numTrabajador, fecha, entrada, salida, null]
     );
 
-    // FIX 2: ID-ESTADO como NULL (Para que funcione, asegúrate de que sea AUTO_INCREMENT en tu BD)
+    // FIX 2: ESTADO
     await db.query(
       `INSERT INTO estado (\`ID-ESTADO\`, \`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE ESTATUS = ?`,
@@ -131,18 +131,30 @@ export const registrarAsistencia = async (req, res) => {
           [numTrabajador, fecha]
         );
 
+        // FIX 3: NOTIFICACIÓN DE FALTA
         await db.query(
-          `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
-           VALUES (?, 'INFO', ?, ?)`,
-          [numTrabajador, `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. Acumulaste ${totalRetardosMes} retardos.`, resultAsis.insertId]
+          `INSERT INTO notificaciones (id_notificacion, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+           VALUES (?, ?, 'INFO', ?, ?)`,
+          [
+            null, 
+            numTrabajador,
+            `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. Acumulaste ${totalRetardosMes} retardos este mes.`,
+            resultAsis.insertId
+          ]
         ).catch(e => logger.error('Error notif FALTA', { error: e.message }));
 
       } else {
         const retardosRestantes = 3 - totalRetardosMes;
+        // FIX 4: NOTIFICACIÓN DE TARDANZA
         await db.query(
-          `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
-           VALUES (?, 'TARDANZA', ?, ?)`,
-          [numTrabajador, `Se registró un retardo el día ${fechaFormateada}. Llevas ${totalRetardosMes} este mes.`, resultAsis.insertId]
+          `INSERT INTO notificaciones (id_notificacion, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+           VALUES (?, ?, 'TARDANZA', ?, ?)`,
+          [
+            null,
+            numTrabajador,
+            `Se registró un retardo el día ${fechaFormateada}. Llevas ${totalRetardosMes} retardo(s) este mes.`,
+            resultAsis.insertId
+          ]
         ).catch(e => logger.error('Error notif tardanza', { error: e.message }));
       }
     }

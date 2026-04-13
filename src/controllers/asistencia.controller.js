@@ -1,4 +1,4 @@
-// fix-v8
+// fix-v9
 import db from '../config/db.js';
 import logger from '../utils/logger.js';
 import { sanitizar } from '../utils/validators.js';
@@ -14,7 +14,7 @@ export const getAsistenciasEmpleado = async (req, res) => {
       `SELECT a.*, i.DESCRIPCION as incidencia_desc
        FROM asistencia a
        LEFT JOIN incidencias i ON CONVERT(a.\`ID-INCIDENCIA\` USING utf8mb4) = CONVERT(i.\`ID-INCIDENCIA\` USING utf8mb4)
-       WHERE CONVERT(a.\`NUM-TRABAJADOR\` USING utf8mb4) = CONVERT(? USING utf8mb4)
+       WHERE CONVERT(a.\`NUM-TRABAJADOR\` USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
        ORDER BY a.FECHA DESC
        LIMIT ? OFFSET ?`,
       [numTrabajador, limit, offset]
@@ -35,7 +35,7 @@ export const getAllAsistencias = async (req, res) => {
     const [rows] = await db.query(
       `SELECT a.*, CONCAT(e.NOMBRE, ' ', e.\`A-PATERNO\`) as nombre_empleado
        FROM asistencia a
-       LEFT JOIN empleado e ON CONVERT(a.\`NUM-TRABAJADOR\` USING utf8mb4) = CONVERT(e.\`NUM-TRABAJADOR\` USING utf8mb4)
+       LEFT JOIN empleado e ON CONVERT(a.\`NUM-TRABAJADOR\` USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(e.\`NUM-TRABAJADOR\` USING utf8mb4) COLLATE utf8mb4_unicode_ci
        ORDER BY a.FECHA DESC
        LIMIT ? OFFSET ?`,
       [limit, offset]
@@ -58,16 +58,28 @@ export const registrarAsistencia = async (req, res) => {
       return res.status(400).json({ msg: 'Número de trabajador y hora de entrada son obligatorios.' });
     }
 
-    // Verificar duplicado via SP
+    // Verificar duplicado
     const [[dupCheck]] = await db.query(
-      'CALL sp_check_duplicado_asistencia(?, ?)',
+      `SELECT COUNT(*) as c FROM asistencia 
+       WHERE FECHA = ? 
+       AND CONVERT(\`NUM-TRABAJADOR\` USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci`,
       [fecha, numTrabajador]
     );
     if (dupCheck.c > 0) {
       return res.status(400).json({ msg: 'Ya existe un registro de asistencia para hoy.' });
     }
 
-    // Registrar via SP (hace INSERT a asistencia, estado y notificacion de tardanza)
+    // Verificar empleado existe
+    const [[empCheck]] = await db.query(
+      `SELECT COUNT(*) as c FROM empleado 
+       WHERE CONVERT(\`NUM-TRABAJADOR\` USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci`,
+      [numTrabajador]
+    );
+    if (empCheck.c === 0) {
+      return res.status(404).json({ msg: 'Número de trabajador no encontrado.' });
+    }
+
+    // Registrar via SP (maneja INSERTs internamente)
     await db.query(
       'CALL sp_registrar_asistencia(?, ?, ?, ?, @p_resultado, @p_es_tardanza)',
       [numTrabajador, fecha, entrada, salida]
@@ -94,7 +106,9 @@ export const registrarAsistencia = async (req, res) => {
       const inicioMes = fecha.substring(0, 7) + '-01';
 
       const [[conteo]] = await db.query(
-        'CALL sp_contar_retardos_mes(?, ?, ?)',
+        `SELECT COUNT(*) as total FROM estado
+         WHERE CONVERT(\`NUM-TRABAJADOR\` USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
+         AND ESTATUS = 'RETARDO' AND FECHA >= ? AND FECHA <= ?`,
         [numTrabajador, inicioMes, fecha]
       );
 

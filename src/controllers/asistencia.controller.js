@@ -81,13 +81,9 @@ export const registrarAsistencia = async (req, res) => {
     let horaEntradaProgramada = '08:00:00';
     if (horario.length > 0) {
       const dia = new Date(fecha + 'T12:00:00').getDay();
-      // CORRECCIÓN 1: Nombres de columnas según tu base de datos (u941347256_Equipo1)
       const mapaDias = {
-        1: 'LUNES_am', 
-        2: 'MARTES_am', 
-        3: 'MIERCOLES_am',
-        4: 'JUEVES_am', 
-        5: 'VIERNES_am'
+        1: 'LUNES_am', 2: 'MARTES_am', 3: 'MIERCOLES_am',
+        4: 'JUEVES_am', 5: 'VIERNES_am'
       };
       if (mapaDias[dia] && horario[0][mapaDias[dia]]) {
         horaEntradaProgramada = horario[0][mapaDias[dia]];
@@ -99,16 +95,17 @@ export const registrarAsistencia = async (req, res) => {
     const esTardanza  = entradaMin > programaMin;
     let estatus       = esTardanza ? 'RETARDO' : 'PUNTUAL';
 
-    // CORRECCIÓN 2: Se agrega ID-INCIDENCIA como NULL para evitar el error de "no default value"
+    // FIX 1: ID-INCIDENCIA como NULL
     const [resultAsis] = await db.query(
       'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA, `ID-INCIDENCIA`) VALUES (?, ?, ?, ?, ?)',
       [numTrabajador, fecha, entrada, salida, null]
     );
 
+    // FIX 2: ID-ESTADO como NULL (Para que funcione, asegúrate de que sea AUTO_INCREMENT en tu BD)
     await db.query(
-      `INSERT INTO estado (\`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?)
+      `INSERT INTO estado (\`ID-ESTADO\`, \`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE ESTATUS = ?`,
-      [numTrabajador, fecha, estatus, estatus]
+      [null, numTrabajador, fecha, estatus, estatus]
     );
 
     if (esTardanza) {
@@ -137,38 +134,18 @@ export const registrarAsistencia = async (req, res) => {
         await db.query(
           `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
            VALUES (?, 'INFO', ?, ?)`,
-          [
-            numTrabajador,
-            `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. ` +
-            `Acumulaste ${totalRetardosMes} retardos este mes. ` +
-            `Puedes subir una justificación desde tu perfil.`,
-            resultAsis.insertId
-          ]
-        ).catch(e => logger.error('Error creando notificación de FALTA', { error: e.message }));
-
-        logger.info('3er retardo convertido a FALTA', { numTrabajador, fecha, totalRetardosMes });
+          [numTrabajador, `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. Acumulaste ${totalRetardosMes} retardos.`, resultAsis.insertId]
+        ).catch(e => logger.error('Error notif FALTA', { error: e.message }));
 
       } else {
         const retardosRestantes = 3 - totalRetardosMes;
         await db.query(
           `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
            VALUES (?, 'TARDANZA', ?, ?)`,
-          [
-            numTrabajador,
-            `Se registró un retardo el día ${fechaFormateada}. ` +
-            `Hora de entrada: ${entrada}. Hora programada: ${horaEntradaProgramada}. ` +
-            `Llevas ${totalRetardosMes} retardo(s) este mes. ` +
-            (retardosRestantes === 1
-              ? `⚠ ¡El siguiente retardo contará como FALTA!`
-              : `Te quedan ${retardosRestantes} retardos antes de que cuente como FALTA.`) +
-            ` Puedes subir una justificación desde tu perfil.`,
-            resultAsis.insertId
-          ]
-        ).catch(e => logger.error('Error creando notificación de tardanza', { error: e.message }));
+          [numTrabajador, `Se registró un retardo el día ${fechaFormateada}. Llevas ${totalRetardosMes} este mes.`, resultAsis.insertId]
+        ).catch(e => logger.error('Error notif tardanza', { error: e.message }));
       }
     }
-
-    logger.info('Asistencia registrada', { numTrabajador, fecha, estatus });
 
     res.status(201).json({
       msg: `Asistencia registrada. Estatus: ${estatus}`,

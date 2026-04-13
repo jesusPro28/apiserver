@@ -57,6 +57,7 @@ export const registrarAsistencia = async (req, res) => {
       return res.status(400).json({ msg: 'Número de trabajador y hora de entrada son obligatorios.' });
     }
 
+    // Verificar si el empleado existe
     const [empExiste] = await db.query(
       'SELECT COUNT(*) as c FROM empleado WHERE `NUM-TRABAJADOR` = ?',
       [numTrabajador]
@@ -65,14 +66,16 @@ export const registrarAsistencia = async (req, res) => {
       return res.status(404).json({ msg: 'Número de trabajador no encontrado.' });
     }
 
+    // Verificar si ya registró hoy
     const [existe] = await db.query(
       'SELECT COUNT(*) as c FROM asistencia WHERE `NUM-TRABAJADOR` = ? AND FECHA = ?',
       [numTrabajador, fecha]
     );
     if (existe[0].c > 0) {
-      return res.status(400).json({ msg: 'Ya existe un registro de asistencia para este empleado en esta fecha.' });
+      return res.status(400).json({ msg: 'Ya existe un registro de asistencia para hoy.' });
     }
 
+    // Consultar horario
     const [horario] = await db.query(
       'SELECT * FROM horario WHERE `NUM-TRABAJADOR` = ?',
       [numTrabajador]
@@ -95,19 +98,20 @@ export const registrarAsistencia = async (req, res) => {
     const esTardanza  = entradaMin > programaMin;
     let estatus       = esTardanza ? 'RETARDO' : 'PUNTUAL';
 
-    // FIX 1: ASISTENCIA
+    // INSERT 1: ASISTENCIA (Con ID-INCIDENCIA como null)
     const [resultAsis] = await db.query(
       'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA, `ID-INCIDENCIA`) VALUES (?, ?, ?, ?, ?)',
       [numTrabajador, fecha, entrada, salida, null]
     );
 
-    // FIX 2: ESTADO
+    // INSERT 2: ESTADO (Con ID-ESTADO como null para Auto Increment)
     await db.query(
       `INSERT INTO estado (\`ID-ESTADO\`, \`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE ESTATUS = ?`,
       [null, numTrabajador, fecha, estatus, estatus]
     );
 
+    // Lógica de Retardos y Notificaciones
     if (esTardanza) {
       const fechaFormateada = new Date(fecha + 'T12:00:00').toLocaleDateString('es-MX');
       const inicioMes = fecha.substring(0, 7) + '-01';
@@ -131,36 +135,26 @@ export const registrarAsistencia = async (req, res) => {
           [numTrabajador, fecha]
         );
 
-        // FIX 3: NOTIFICACIÓN DE FALTA
+        // INSERT 3: NOTIFICACIÓN (Columna 'id' como null)
         await db.query(
-          `INSERT INTO notificaciones (id_notificacion, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+          `INSERT INTO notificaciones (id, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
            VALUES (?, ?, 'INFO', ?, ?)`,
-          [
-            null, 
-            numTrabajador,
-            `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. Acumulaste ${totalRetardosMes} retardos este mes.`,
-            resultAsis.insertId
-          ]
+          [null, numTrabajador, `⚠ Retardo del ${fechaFormateada} contado como FALTA por acumular 3.`, resultAsis.insertId]
         ).catch(e => logger.error('Error notif FALTA', { error: e.message }));
 
       } else {
         const retardosRestantes = 3 - totalRetardosMes;
-        // FIX 4: NOTIFICACIÓN DE TARDANZA
+        // INSERT 4: NOTIFICACIÓN (Columna 'id' como null)
         await db.query(
-          `INSERT INTO notificaciones (id_notificacion, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+          `INSERT INTO notificaciones (id, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
            VALUES (?, ?, 'TARDANZA', ?, ?)`,
-          [
-            null,
-            numTrabajador,
-            `Se registró un retardo el día ${fechaFormateada}. Llevas ${totalRetardosMes} retardo(s) este mes.`,
-            resultAsis.insertId
-          ]
+          [null, numTrabajador, `Retardo registrado el ${fechaFormateada}. Llevas ${totalRetardosMes} este mes.`, resultAsis.insertId]
         ).catch(e => logger.error('Error notif tardanza', { error: e.message }));
       }
     }
 
     res.status(201).json({
-      msg: `Asistencia registrada. Estatus: ${estatus}`,
+      msg: `Asistencia registrada: ${estatus}`,
       estatus,
       esTardanza
     });

@@ -1,8 +1,8 @@
-import { createPool } from 'mysql2/promise';
+import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const pool = createPool({
+const pool = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
@@ -13,11 +13,8 @@ const pool = createPool({
   charset: 'utf8mb4'
 });
 
-const originalGetConnection = pool.getConnection.bind(pool);
-pool.getConnection = async () => {
-  const conn = await originalGetConnection();
-  await conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
-  return conn;
-};
+pool.on('connection', (connection) => {
+  connection.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+});
 
 export default pool;

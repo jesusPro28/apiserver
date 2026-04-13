@@ -7,11 +7,10 @@ const pool = mysql.createPool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 3306,
+  port: parseInt(process.env.DB_PORT) || 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  charset: 'utf8mb4',
-  initializationCommands: ["SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"]
+  charset: 'UTF8MB4_UNICODE_CI'
 });
 
 export default pool;

@@ -11,7 +11,7 @@ const pool = createPool({
   waitForConnections: true,
   connectionLimit: 10,
   charset: 'utf8mb4',
-  collation: 'utf8mb4_general_ci'
+  collation: 'utf8mb4_unicode_ci'
 });
 
 export default pool;

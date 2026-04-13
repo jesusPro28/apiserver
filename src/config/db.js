@@ -10,12 +10,14 @@ const pool = createPool({
   port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  charset: 'utf8mb4',
-  timezone: '+00:00',
-  after: async (connection) => {
-    await connection.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
-    await connection.query("SET collation_connection = utf8mb4_unicode_ci");
-  }
+  charset: 'utf8mb4'
 });
+
+const originalGetConnection = pool.getConnection.bind(pool);
+pool.getConnection = async () => {
+  const conn = await originalGetConnection();
+  await conn.query("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+  return conn;
+};
 
 export default pool;

@@ -10,8 +10,7 @@ const pool = createPool({
   port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  charset: 'utf8mb4',
-  collation: 'utf8mb4_unicode_ci'
+  charset: 'utf8mb4'
 });
 
 export default pool;

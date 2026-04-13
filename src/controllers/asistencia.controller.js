@@ -57,114 +57,71 @@ export const registrarAsistencia = async (req, res) => {
       return res.status(400).json({ msg: 'Número de trabajador y hora de entrada son obligatorios.' });
     }
 
-    // Verificar si el empleado existe
-    const [empExiste] = await db.query(
-      'SELECT COUNT(*) as c FROM empleado WHERE `NUM-TRABAJADOR` = ?',
-      [numTrabajador]
-    );
-    if (empExiste[0].c === 0) {
-      return res.status(404).json({ msg: 'Número de trabajador no encontrado.' });
-    }
+    const [empExiste] = await db.query('SELECT COUNT(*) as c FROM empleado WHERE `NUM-TRABAJADOR` = ?', [numTrabajador]);
+    if (empExiste[0].c === 0) return res.status(404).json({ msg: 'Número de trabajador no encontrado.' });
 
-    // Verificar si ya registró hoy
-    const [existe] = await db.query(
-      'SELECT COUNT(*) as c FROM asistencia WHERE `NUM-TRABAJADOR` = ? AND FECHA = ?',
-      [numTrabajador, fecha]
-    );
-    if (existe[0].c > 0) {
-      return res.status(400).json({ msg: 'Ya existe un registro de asistencia para hoy.' });
-    }
+    const [existe] = await db.query('SELECT COUNT(*) as c FROM asistencia WHERE `NUM-TRABAJADOR` = ? AND FECHA = ?', [numTrabajador, fecha]);
+    if (existe[0].c > 0) return res.status(400).json({ msg: 'Ya existe un registro de asistencia para hoy.' });
 
-    // Consultar horario
-    const [horario] = await db.query(
-      'SELECT * FROM horario WHERE `NUM-TRABAJADOR` = ?',
-      [numTrabajador]
-    );
-
+    const [horario] = await db.query('SELECT * FROM horario WHERE `NUM-TRABAJADOR` = ?', [numTrabajador]);
     let horaEntradaProgramada = '08:00:00';
     if (horario.length > 0) {
       const dia = new Date(fecha + 'T12:00:00').getDay();
-      const mapaDias = {
-        1: 'LUNES_am', 2: 'MARTES_am', 3: 'MIERCOLES_am',
-        4: 'JUEVES_am', 5: 'VIERNES_am'
-      };
-      if (mapaDias[dia] && horario[0][mapaDias[dia]]) {
-        horaEntradaProgramada = horario[0][mapaDias[dia]];
-      }
+      const mapaDias = { 1: 'LUNES_am', 2: 'MARTES_am', 3: 'MIERCOLES_am', 4: 'JUEVES_am', 5: 'VIERNES_am' };
+      if (mapaDias[dia] && horario[0][mapaDias[dia]]) horaEntradaProgramada = horario[0][mapaDias[dia]];
     }
 
-    const entradaMin  = timeToMinutes(entrada);
+    const entradaMin = timeToMinutes(entrada);
     const programaMin = timeToMinutes(horaEntradaProgramada);
-    const esTardanza  = entradaMin > programaMin;
-    let estatus       = esTardanza ? 'RETARDO' : 'PUNTUAL';
+    const esTardanza = entradaMin > programaMin;
+    let estatus = esTardanza ? 'RETARDO' : 'PUNTUAL';
 
-    // INSERT 1: ASISTENCIA (Con ID-INCIDENCIA como null)
+    // INSERT 1: ASISTENCIA (Omitimos ID-ASISTENCIA para que MySQL use el Auto Increment)
     const [resultAsis] = await db.query(
       'INSERT INTO asistencia (`NUM-TRABAJADOR`, FECHA, ENTRADA, SALIDA, `ID-INCIDENCIA`) VALUES (?, ?, ?, ?, ?)',
       [numTrabajador, fecha, entrada, salida, null]
     );
 
-    // INSERT 2: ESTADO (Con ID-ESTADO como null para Auto Increment)
+    // INSERT 2: ESTADO (Omitimos ID-ESTADO para que MySQL use el Auto Increment)
     await db.query(
-      `INSERT INTO estado (\`ID-ESTADO\`, \`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?, ?)
+      `INSERT INTO estado (\`NUM-TRABAJADOR\`, FECHA, ESTATUS) VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE ESTATUS = ?`,
-      [null, numTrabajador, fecha, estatus, estatus]
+      [numTrabajador, fecha, estatus, estatus]
     );
 
-    // Lógica de Retardos y Notificaciones
     if (esTardanza) {
       const fechaFormateada = new Date(fecha + 'T12:00:00').toLocaleDateString('es-MX');
       const inicioMes = fecha.substring(0, 7) + '-01';
-
-      const [conteoRetardos] = await db.query(
-        `SELECT COUNT(*) as total FROM estado
-         WHERE \`NUM-TRABAJADOR\` = ?
-           AND ESTATUS = 'RETARDO'
-           AND FECHA >= ?
-           AND FECHA <= ?`,
+      
+      const [conteo] = await db.query(
+        `SELECT COUNT(*) as total FROM estado 
+         WHERE \`NUM-TRABAJADOR\` = ? AND ESTATUS = 'RETARDO' AND FECHA >= ? AND FECHA <= ?`,
         [numTrabajador, inicioMes, fecha]
       );
+      const totalRetardosMes = conteo[0].total;
 
-      const totalRetardosMes = conteoRetardos[0].total;
+      const mensaje = totalRetardosMes >= 3 
+        ? `⚠ Tu retardo del ${fechaFormateada} fue registrado como FALTA. Acumulaste ${totalRetardosMes} retardos.` 
+        : `Se registró un retardo el día ${fechaFormateada}. Llevas ${totalRetardosMes} este mes.`;
 
-      if (totalRetardosMes >= 3) {
-        estatus = 'FALTA';
-        await db.query(
-          `UPDATE estado SET ESTATUS = 'FALTA'
-           WHERE \`NUM-TRABAJADOR\` = ? AND FECHA = ?`,
-          [numTrabajador, fecha]
-        );
-
-        // INSERT 3: NOTIFICACIÓN (Columna 'id' como null)
-        await db.query(
-          `INSERT INTO notificaciones (id, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
-           VALUES (?, ?, 'INFO', ?, ?)`,
-          [null, numTrabajador, `⚠ Retardo del ${fechaFormateada} contado como FALTA por acumular 3.`, resultAsis.insertId]
-        ).catch(e => logger.error('Error notif FALTA', { error: e.message }));
-
-      } else {
-        const retardosRestantes = 3 - totalRetardosMes;
-        // INSERT 4: NOTIFICACIÓN (Columna 'id' como null)
-        await db.query(
-          `INSERT INTO notificaciones (id, \`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
-           VALUES (?, ?, 'TARDANZA', ?, ?)`,
-          [null, numTrabajador, `Retardo registrado el ${fechaFormateada}. Llevas ${totalRetardosMes} este mes.`, resultAsis.insertId]
-        ).catch(e => logger.error('Error notif tardanza', { error: e.message }));
-      }
+      // INSERT 3: NOTIFICACIONES (Omitimos la columna 'id' para que MySQL use el Auto Increment)
+      await db.query(
+        `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
+         VALUES (?, ?, ?, ?)`,
+        [
+          numTrabajador,
+          totalRetardosMes >= 3 ? 'INFO' : 'TARDANZA',
+          mensaje,
+          resultAsis.insertId
+        ]
+      ).catch(e => logger.error('Error notif', { error: e.message }));
     }
 
-    res.status(201).json({
-      msg: `Asistencia registrada: ${estatus}`,
-      estatus,
-      esTardanza
-    });
+    res.status(201).json({ msg: `Asistencia registrada: ${estatus}`, estatus });
 
   } catch (error) {
     logger.error('Error en registrarAsistencia', { error: error.message });
-    res.status(500).json({ 
-      msg: 'Error al registrar asistencia.',
-      error_tecnico: error.message 
-    });
+    res.status(500).json({ msg: 'Error al registrar.', error_tecnico: error.message });
   }
 };
 

@@ -1,6 +1,5 @@
 import { createPool } from 'mysql2/promise';
 import dotenv from 'dotenv';
-
 dotenv.config();
 
 const pool = createPool({
@@ -11,7 +10,8 @@ const pool = createPool({
   port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  charset: 'utf8mb4'
+  charset: 'utf8mb4',
+  collation: 'utf8mb4_general_ci'
 });
 
 export default pool;

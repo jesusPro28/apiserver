@@ -1,4 +1,4 @@
-// fix-v5
+// fix-v6
 import db from '../config/db.js';
 import logger from '../utils/logger.js';
 import { sanitizar } from '../utils/validators.js';
@@ -11,15 +11,10 @@ export const getAsistenciasEmpleado = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const [rows] = await db.query(
-      `SELECT a.*, i.DESCRIPCION as incidencia_desc
-       FROM asistencia a
-       LEFT JOIN incidencias i ON a.\`ID-INCIDENCIA\` = i.\`ID-INCIDENCIA\`
-       WHERE a.\`NUM-TRABAJADOR\` = ?
-       ORDER BY a.FECHA DESC
-       LIMIT ? OFFSET ?`,
+      'CALL sp_get_asistencias_empleado(?, ?, ?)',
       [numTrabajador, limit, offset]
     );
-    res.json(rows);
+    res.json(rows[0]);
   } catch (error) {
     logger.error('Error en getAsistenciasEmpleado', { error: error.message });
     res.status(500).json({ msg: 'Error al obtener asistencias.' });
@@ -33,14 +28,10 @@ export const getAllAsistencias = async (req, res) => {
     const offset = (page - 1) * limit;
 
     const [rows] = await db.query(
-      `SELECT a.*, CONCAT(e.NOMBRE, " ", e.\`A-PATERNO\`) as nombre_empleado
-       FROM asistencia a
-       LEFT JOIN empleado e ON a.\`NUM-TRABAJADOR\` = e.\`NUM-TRABAJADOR\`
-       ORDER BY a.FECHA DESC
-       LIMIT ? OFFSET ?`,
+      'CALL sp_get_all_asistencias(?, ?)',
       [limit, offset]
     );
-    res.json(rows);
+    res.json(rows[0]);
   } catch (error) {
     logger.error('Error en getAllAsistencias', { error: error.message });
     res.status(500).json({ msg: 'Error al obtener asistencias.' });
@@ -60,21 +51,21 @@ export const registrarAsistencia = async (req, res) => {
 
     // Verificar duplicado
     const [[dupCheck]] = await db.query(
-      `SELECT COUNT(*) as c FROM asistencia WHERE FECHA = ? AND \`NUM-TRABAJADOR\` = ?`,
+      'CALL sp_check_duplicado_asistencia(?, ?)',
       [fecha, numTrabajador]
     );
     if (dupCheck.c > 0) {
       return res.status(400).json({ msg: 'Ya existe un registro de asistencia para hoy.' });
     }
 
-    // Usar stored procedure
+    // Registrar asistencia via stored procedure
     await db.query(
-      `CALL sp_registrar_asistencia(?, ?, ?, ?, @p_resultado, @p_es_tardanza)`,
+      'CALL sp_registrar_asistencia(?, ?, ?, ?, @p_resultado, @p_es_tardanza)',
       [numTrabajador, fecha, entrada, salida]
     );
 
     const [[output]] = await db.query(
-      `SELECT @p_resultado as resultado, @p_es_tardanza as es_tardanza`
+      'SELECT @p_resultado as resultado, @p_es_tardanza as es_tardanza'
     );
 
     const resultado = output.resultado || '';
@@ -88,32 +79,27 @@ export const registrarAsistencia = async (req, res) => {
 
     const estatus = output.es_tardanza === 1 ? 'RETARDO' : 'PUNTUAL';
 
-    // Notificación extra si acumuló 3+ retardos en el mes
+    // Notificación si acumuló 3+ retardos en el mes
     if (output.es_tardanza === 1) {
       const fechaFormateada = new Date(fecha + 'T12:00:00').toLocaleDateString('es-MX');
       const inicioMes = fecha.substring(0, 7) + '-01';
 
       const [[conteo]] = await db.query(
-        `SELECT COUNT(*) as total FROM estado
-         WHERE \`NUM-TRABAJADOR\` = ?
-         AND ESTATUS = "RETARDO"
-         AND FECHA >= ?
-         AND FECHA <= ?`,
+        'CALL sp_contar_retardos_mes(?, ?, ?)',
         [numTrabajador, inicioMes, fecha]
       );
 
       if (conteo.total >= 3) {
-        const mensaje = `Tu retardo del ${fechaFormateada} fue registrado como FALTA. Acumulaste ${conteo.total} retardos.`;
+        const mensaje = 'Tu retardo del ' + fechaFormateada + ' fue registrado como FALTA. Acumulaste ' + conteo.total + ' retardos.';
         await db.query(
-          `INSERT INTO notificaciones (\`NUM-TRABAJADOR\`, tipo, mensaje, referencia_id)
-           VALUES (?, "INFO", ?, 0)`,
+          'CALL sp_insertar_notificacion(?, ?)',
           [numTrabajador, mensaje]
         ).catch(e => logger.error('Error notif', { error: e.message }));
       }
     }
 
     logger.info('Asistencia registrada via SP', { numTrabajador, fecha, estatus });
-    res.status(201).json({ msg: `Asistencia registrada: ${estatus}`, estatus });
+    res.status(201).json({ msg: 'Asistencia registrada: ' + estatus, estatus });
 
   } catch (error) {
     logger.error('Error en registrarAsistencia', { error: error.message });

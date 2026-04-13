@@ -10,7 +10,7 @@ const pool = mysql.createPool({
   port: parseInt(process.env.DB_PORT) || 3306,
   waitForConnections: true,
   connectionLimit: 10,
-  charset: 'UTF8MB4_UNICODE_CI'
+  charset: 'utf8mb4'
 });
 
 export default pool;

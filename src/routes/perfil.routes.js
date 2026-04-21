@@ -31,14 +31,14 @@ router.get('/', verificarToken, async (req, res) => {
     const emp = rows[0];
     const horario = emp.TURNO ? {
       TURNO: emp.TURNO,
-      'LUNES-am': emp['LUNES-am'], 'LUNES-pm': emp['LUNES-pm'],
-      'MARTES-am': emp['MARTES-am'], 'MARTES-pm': emp['MARTES-pm'],
+      'LUNES-am':     emp['LUNES-am'],     'LUNES-pm':     emp['LUNES-pm'],
+      'MARTES-am':    emp['MARTES-am'],    'MARTES-pm':    emp['MARTES-pm'],
       'MIÉRCOLES-am': emp['MIÉRCOLES-am'], 'MIÉRCOLES-pm': emp['MIÉRCOLES-pm'],
-      'JUEVES-am': emp['JUEVES-am'], 'JUEVES-pm': emp['JUEVES-pm'],
-      'VIERNES-am': emp['VIERNES-am'], 'VIERNES-pm': emp['VIERNES-pm']
+      'JUEVES-am':    emp['JUEVES-am'],    'JUEVES-pm':    emp['JUEVES-pm'],
+      'VIERNES-am':   emp['VIERNES-am'],   'VIERNES-pm':   emp['VIERNES-pm']
     } : null;
 
-    // Estados recientes
+    // Últimos 10 estados para la vista rápida del perfil
     const [estados] = await db.query(
       `SELECT FECHA, ESTATUS FROM estado
        WHERE \`NUM-TRABAJADOR\` = ?
@@ -74,20 +74,22 @@ router.get('/', verificarToken, async (req, res) => {
   }
 });
 
-// ✅ Obtener asistencias del empleado
+// ✅ Obtener TODAS las asistencias del empleado (sin límite, desde inicio hasta hoy)
 router.get('/asistencias', verificarToken, async (req, res) => {
   try {
     const numTrabajador = req.usuario.numTrabajador;
     const { fechaInicio, fechaFin } = req.query;
 
-    let query = `SELECT * FROM asistencia WHERE \`NUM-TRABAJADOR\` = ?`;
+    let query = 'SELECT FECHA, ENTRADA, SALIDA, `ID-INCIDENCIA` FROM asistencia WHERE `NUM-TRABAJADOR` = ?';
     let params = [numTrabajador];
 
     if (fechaInicio && fechaFin) {
       query += ' AND FECHA BETWEEN ? AND ?';
       params.push(fechaInicio, fechaFin);
     }
-    query += ' ORDER BY FECHA DESC LIMIT 30';
+
+    // Sin LIMIT — devuelve todos los registros desde el primer día hasta hoy
+    query += ' ORDER BY FECHA DESC';
 
     const [rows] = await db.query(query, params);
     res.json(rows);
@@ -102,7 +104,7 @@ router.get('/incidencias', verificarToken, async (req, res) => {
   try {
     const numTrabajador = req.usuario.numTrabajador;
     const [rows] = await db.query(
-      `SELECT * FROM incidencias WHERE \`NUM-TRABAJADOR\` = ? ORDER BY FECHA DESC`,
+      'SELECT * FROM incidencias WHERE `NUM-TRABAJADOR` = ? ORDER BY FECHA DESC',
       [numTrabajador]
     );
     res.json(rows);
@@ -121,7 +123,6 @@ router.put('/password', verificarToken, async (req, res) => {
     if (!passwordActual || !passwordNueva) {
       return res.status(400).json({ msg: 'Contraseña actual y nueva son obligatorias.' });
     }
-
     if (passwordNueva.length < 8) {
       return res.status(400).json({ msg: 'La contraseña debe tener al menos 8 caracteres.' });
     }
@@ -172,7 +173,6 @@ router.post('/foto', verificarToken, async (req, res) => {
 
     if (!foto) return res.status(400).json({ msg: 'La foto es obligatoria.' });
 
-    // Validar tamaño (base64 es ~33% más grande que el archivo original)
     if (foto.length > 7 * 1024 * 1024) {
       return res.status(400).json({ msg: 'La foto excede el tamaño máximo de 5MB.' });
     }

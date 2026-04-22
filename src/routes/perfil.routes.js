@@ -42,7 +42,7 @@ router.get('/', verificarToken, async (req, res) => {
     const [estados] = await db.query(
       `SELECT FECHA, ESTATUS FROM estado
        WHERE \`NUM-TRABAJADOR\` = ?
-       ORDER BY FECHA DESC LIMIT 10`,
+       ORDER BY FECHA DESC`,
       [numTrabajador]
     );
 

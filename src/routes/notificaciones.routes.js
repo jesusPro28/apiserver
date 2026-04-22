@@ -5,6 +5,7 @@ import { verificarToken } from '../middleware/auth.js';
 const router = Router();
 
 router.get('/', verificarToken, ctrl.getMisNotificaciones);
+router.get('/retardo', verificarToken, ctrl.getNotificacionesRetardo);
 router.put('/:id/leida', verificarToken, ctrl.marcarLeida);
 router.put('/marcar-todas', verificarToken, ctrl.marcarTodasLeidas);
 

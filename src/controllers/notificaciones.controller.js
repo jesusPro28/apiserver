@@ -117,3 +117,27 @@ export const marcarTodasLeidas = async (req, res) => {
   }
 
 };
+
+// Obtener notificaciones de retardo del empleado logueado (tabla notificacionRetardo)
+export const getNotificacionesRetardo = async (req, res) => {
+  try {
+    const numTrabajador = req.usuario.numTrabajador;
+    if (!numTrabajador) {
+      return res.status(400).json({ msg: 'No se pudo identificar al empleado.' });
+    }
+
+    const [rows] = await db.query(
+      `SELECT id, \`num-trabajador\` AS numTrabajador, mensaje, fecha_registro
+       FROM notificacionRetardo
+       WHERE \`num-trabajador\` = ?
+       ORDER BY fecha_registro DESC
+       LIMIT 50`,
+      [numTrabajador]
+    );
+
+    res.json({ notificacionesRetardo: rows });
+  } catch (error) {
+    logger.error('Error en getNotificacionesRetardo', { error: error.message });
+    res.status(500).json({ msg: 'Error al obtener notificaciones de retardo.' });
+  }
+};
